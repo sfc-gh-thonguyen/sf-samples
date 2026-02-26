@@ -1,0 +1,78 @@
+# Judge Server Configuration for Snowflake SPCS
+# This config launches the LLM judge as a standalone SGLang server.
+# The judge evaluates SOAP note quality during RL training.
+#
+# Usage:
+#   python3 -m areal.launcher.local judge_server.py \
+#       --config judge_server_config.yaml \
+#       experiment_name=medical-soap-judge \
+#       trial_name=v1
+
+experiment_name: medical-soap-judge
+trial_name: v1
+
+seed: 1
+
+# Cluster config for judge node (1 node, 1 GPU)
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 1
+  fileroot: /mnt/job_stage/judge/${experiment_name}/${trial_name}
+  name_resolve:
+    type: nfs
+    nfs_record_root: /mnt/job_stage/name_resolve/${experiment_name}/${trial_name}
+
+# LLM_SERVER_ONLY mode: only launches inference server, no trainer
+allocation_mode: sglang:d1p1t1
+
+# SGLang config for the judge model (Qwen3-8B)
+sglang:
+  model_path: Qwen/Qwen3-8B
+  random_seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: bfloat16
+  max_running_requests: null
+  context_length: 8192
+  mem_fraction_static: 0.85
+  schedule_policy: fcfs
+  enable_lora: false
+
+tokenizer_path: Qwen/Qwen3-8B
+
+# Required by launcher (not used in LLM_SERVER_ONLY mode)
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+# Dummy configs required by the launcher but not used in LLM_SERVER_ONLY mode
+actor:
+  path: Qwen/Qwen3-8B
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 64
+  queue_size: null
+  consumer_batch_size: 8
+  max_head_offpolicyness: 10000000
+  enable_rollout_tracing: false
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+
+gconfig:
+  n_samples: 1
+  min_new_tokens: 0
+  max_new_tokens: 2048
+  greedy: false
+  temperature: 0.0

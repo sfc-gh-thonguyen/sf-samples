@@ -1,0 +1,21 @@
+spec:
+  containers:
+    - name: main
+      image: python:3.12-slim
+      command:
+        - bash
+        - -c
+        - |
+          echo "Starting AReaL setup..." &&
+          apt-get update && apt-get install -y git curl build-essential &&
+          pip install uv &&
+          cd /tmp &&
+          git clone https://github.com/inclusionAI/AReaL.git &&
+          cd AReaL &&
+          uv sync --extra cuda &&
+          uv run python -m areal.launcher.ray /mnt/job_stage/payload/soap_grpo_trainer.py --config /mnt/job_stage/payload/grpo_lora_config.yaml
+      resources:
+        requests:
+          nvidia.com/gpu: 4
+        limits:
+          nvidia.com/gpu: 4

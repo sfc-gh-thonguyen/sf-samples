@@ -1,0 +1,235 @@
+# GRPO Training Configuration - Unified Multi-Node Template
+# 
+# This template supports N nodes with configurable role assignment.
+# Replace the nodes.total and nodes.roles to match your cluster setup.
+#
+# Examples:
+#   2-node setup:  total: 2, roles: {rollout: 1, trainer: 1}
+#   3-node setup:  total: 3, roles: {rollout: 1, trainer: 2}
+#   4-node setup:  total: 4, roles: {rollout: 2, trainer: 2}
+#
+# For external LLM judge, launch a separate job and configure external_judge.
+
+experiment_name: grpo-multinode
+trial_name: v1
+
+seed: 1
+enable_offload: false
+total_train_epochs: 1
+tokenizer_path: ${actor.path}
+
+# ============================================================================
+# UNIFIED NODE ALLOCATION SCHEMA
+# ============================================================================
+# This section replaces the legacy AREAL_3NODE_MODE environment variable.
+# Explicitly declare how nodes are allocated to roles.
+nodes:
+  total: 2
+  roles:
+    rollout: 1
+    trainer: 1
+  external_judge:
+    enabled: false
+    experiment_name: null
+    trial_name: null
+    config: null
+
+# Cluster configuration
+cluster:
+  n_nodes: 2
+  n_gpus_per_node: 4
+  fileroot: /mnt/job_stage/checkpoints/${experiment_name}/${trial_name}
+  name_resolve:
+    type: nfs
+    nfs_record_root: /mnt/job_stage/name_resolve
+
+# Allocation mode: sglang:d<dp>p<pp>t<tp>+d<dp>p<pp>t<tp>
+#   - First part: inference server config (dp=data parallel, tp=tensor parallel)
+#   - Second part: training config
+# 
+# For 1 rollout node + 1 trainer node (2 nodes total, 4 GPUs each):
+#   sglang:d1p1t4+d4p1t1  = 1 server with tp=4, 4 trainers with tp=1
+#
+# For 2 rollout nodes + 2 trainer nodes (4 nodes total):
+#   sglang:d2p1t4+d8p1t1  = 2 servers with tp=4, 8 trainers with tp=1
+allocation_mode: sglang:d1p1t4+d4p1t1
+
+scheduler:
+  type: null
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 64
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: false
+  pause_grace_period: 1.0
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
+  setup_timeout: 600.0
+  request_timeout: 900.0
+  use_lora: true
+
+# Judge configuration (only used if nodes.external_judge.enabled is true)
+# The judge must be launched as a separate job first.
+judge:
+  experiment_name: ${nodes.external_judge.experiment_name}
+  trial_name: ${nodes.external_judge.trial_name}
+
+gconfig:
+  n_samples: 4
+  min_new_tokens: 0
+  max_new_tokens: 512
+  greedy: false
+  temperature: 1.0
+  lora_name: "lora-grpo"
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen3-0.6B
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer:
+    type: adam
+    lr: 1.7e-4
+    weight_decay: 0.017
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.4
+  temperature: ${gconfig.temperature}
+  reward_scaling: 10.0
+  reward_bias: -0.5
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behav_imp_weight_cap: 5.0
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  max_new_tokens: ${gconfig.max_new_tokens}
+  weight_update_mode: xccl
+  use_lora: ${rollout.use_lora}
+  peft_type: lora
+  lora_rank: 16
+  lora_alpha: 16
+  target_modules: [all-linear]
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 12
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
+
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: 4096
+  mem_fraction_static: 0.8
+  enable_torch_compile: false
+  disable_cuda_graph: true
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 4096
+  gpu_memory_utilization: 0.8
+  enable_lora: ${rollout.use_lora}
+  lora_modules: '{"name": "${gconfig.lora_name}", "path": "./model/lora", "base_model_name": "${actor.path}"}'
+  enforce_eager: true
+
+train_dataset:
+  batch_size: 32
+  shuffle: true
+  pin_memory: true
+  num_workers: 2
+  path: openai/gsm8k
+  type: rl
+  max_length: 1024
+
+valid_dataset:
+  batch_size: 32
+  pin_memory: true
+  num_workers: 2
+  path: openai/gsm8k
+  type: rl
+  max_length: 1024
+
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false

@@ -1,0 +1,19 @@
+# Large files - do not commit
+docker/areal-runtime.tar
+docker/*.tar
+src/data/*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs and temp
+*.log
+/tmp/
