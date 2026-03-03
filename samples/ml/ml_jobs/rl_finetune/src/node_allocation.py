@@ -39,14 +39,25 @@ class NodeAllocation:
     total: int
     roles: dict[str, int] = field(default_factory=lambda: {"rollout": 1, "trainer": 1})
     external_judge: ExternalJudgeConfig = field(default_factory=ExternalJudgeConfig)
+    colocated: bool = False  # True when single-node mode (all roles on same node)
     
     def __post_init__(self):
         if isinstance(self.external_judge, dict):
             self.external_judge = ExternalJudgeConfig(**self.external_judge)
     
     def validate(self):
-        """Validate that roles sum to total nodes."""
+        """Validate that roles sum to total nodes (or colocated mode)."""
         roles_sum = sum(self.roles.values())
+        
+        # In colocated mode (single-node), both rollout and trainer are 1
+        # but they share the same physical node (total=1)
+        if self.colocated:
+            if self.total != 1:
+                raise ValueError(f"Colocated mode requires total=1, got {self.total}")
+            if self.roles.get("rollout") != 1 or self.roles.get("trainer") != 1:
+                raise ValueError(f"Colocated mode requires rollout=1 and trainer=1")
+            return  # Skip sum check for colocated
+        
         if roles_sum != self.total:
             raise ValueError(
                 f"Node roles must sum to total. "
@@ -174,6 +185,20 @@ def derive_from_legacy_config(config) -> NodeAllocation:
         allocation_mode_str = config.allocation_mode
     elif isinstance(config, dict):
         allocation_mode_str = config.get('allocation_mode', '')
+    
+    # SINGLE-NODE MODE: Both rollout and trainer share the same node
+    # We mark this with special "colocated" count of 1 for each
+    # The node tags won't be used for scheduling since everything is local
+    if n_nodes == 1:
+        return NodeAllocation(
+            total=1,
+            roles={
+                "rollout": 1,  # Both roles colocated
+                "trainer": 1,  # on the single node
+            },
+            external_judge=ExternalJudgeConfig(enabled=False),
+            colocated=True,  # Flag for single-node colocated mode
+        )
     
     n_rollout_nodes = 1
     n_trainer_nodes = max(1, n_nodes - n_rollout_nodes)

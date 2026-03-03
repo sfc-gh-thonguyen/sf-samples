@@ -1,34 +1,30 @@
 # GRPO LoRA Training Configuration for Snowflake SPCS
-# Two-node decoupled setup: 8 GPUs total (4 per node)
-#   - Node 1: 2 GPUs for SGLang inference (d2p1t1) - reduced due to SPCS cross-node limit
-#   - Node 2: 4 GPUs for training (d4p1t1)
+# Single-node setup: 4 GPUs total (multi-node Ray broken in SPCS)
+#   - 2 GPUs for SGLang inference (tp=2)
+#   - 2 GPUs for training (dp=2)
 #
 # Using GSM8K dataset for testing AReaL in SPCS
-# NOTE: Reduced SGLang dp from 4 to 2 because SPCS limits cross-pod HTTP connections
 
 experiment_name: gsm8k-spcs-test
-trial_name: v1
+trial_name: v23
 
 seed: 1
 enable_offload: false
-total_train_epochs: 1
+total_train_epochs: 3
 tokenizer_path: ${actor.path}
 
-# Two nodes with 4 GPUs each
+# Single node with 4 GPUs (multi-node Ray broken in SPCS)
 cluster:
-  n_nodes: 2
+  n_nodes: 1
   n_gpus_per_node: 4
   fileroot: /mnt/job_stage/checkpoints/${experiment_name}/${trial_name}
   name_resolve:
     type: nfs
     nfs_record_root: /mnt/job_stage/name_resolve/${experiment_name}/${trial_name}
 
-# Decoupled mode: SGLang inference on node 1, training on node 2
+# Single-node setup: 2 GPUs for SGLang (tp=2) + 2 GPUs for training (dp=2)
 # Format: sglang:d<dp>p<pp>t<tp>+d<dp>p<pp>t<tp>
-#   - First part (sglang:d1p1t4): 1 inference server with tp=4 (4 GPUs total)
-#   - Second part (+d4p1t1): 4 data parallel training processes
-# WORKAROUND: Only 1 SGLang server because SPCS seems to limit cross-node HTTP to 1 connection
-allocation_mode: sglang:d1p1t4+d4p1t1
+allocation_mode: sglang:d1p1t2+d2p1t1
 
 scheduler:
   type: null
@@ -36,11 +32,12 @@ scheduler:
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 64
+  max_concurrent_rollouts: 32
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
-  enable_rollout_tracing: false
+  # Enable rollout tracing to capture detailed metrics
+  enable_rollout_tracing: true
   pause_grace_period: 1.0
   scheduling_spec: ${actor.scheduling_spec}
   fileroot: ${cluster.fileroot}
@@ -51,9 +48,9 @@ rollout:
   use_lora: true
 
 gconfig:
-  n_samples: 4
+  n_samples: 8
   min_new_tokens: 0
-  max_new_tokens: 512
+  max_new_tokens: 1024
   greedy: false
   temperature: 1.0
   lora_name: "lora-gsm8k"
@@ -70,18 +67,19 @@ actor:
     max_tokens_per_mb: 4096
   optimizer:
     type: adam
-    lr: 1.7e-4
-    weight_decay: 0.017
+    lr: 5e-4  # Increased from 2e-4 - grad norms are small (~0.07), need higher LR
+    weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8
-    lr_scheduler_type: constant
+    lr_scheduler_type: cosine
     gradient_clipping: 1.0
-    warmup_steps_proportion: 0.001
+    warmup_steps_proportion: 0.05
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
+  # GRPO uses group-relative advantages, no KL penalty needed
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
@@ -99,8 +97,10 @@ actor:
   use_lora: ${rollout.use_lora}
   peft_type: lora
   lora_rank: 16
-  lora_alpha: 16
-  target_modules: [all-linear]
+  lora_alpha: 32  # Increased from 16 - scaling factor now 2.0 for stronger LoRA effect
+  # Must match SGLang's --lora-target-modules (q_proj, k_proj, v_proj, o_proj)
+  # Using all-linear causes mismatch when loading LoRA into SGLang
+  target_modules: [q_proj, k_proj, v_proj, o_proj]
   scheduling_spec:
     - task_type: worker
       port_count: 2
@@ -137,6 +137,10 @@ sglang:
   enable_torch_compile: false
   disable_cuda_graph: true
   enable_lora: ${rollout.use_lora}
+  # LoRA memory pool configuration - REQUIRED for dynamic adapter loading
+  # Without these, SGLang rejects dynamically loaded LoRA adapters
+  max_lora_rank: 16
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj]
   lora_paths: []
 
 # vLLM config for rollout
@@ -153,18 +157,18 @@ vllm:
 
 # Datasets - using GSM8K from HuggingFace
 train_dataset:
-  batch_size: 32
+  batch_size: 16
   shuffle: true
   pin_memory: true
-  num_workers: 2
+  num_workers: 1
   path: openai/gsm8k
   type: rl
   max_length: 1024
 
 valid_dataset:
-  batch_size: 32
+  batch_size: 16
   pin_memory: true
-  num_workers: 2
+  num_workers: 1
   path: openai/gsm8k
   type: rl
   max_length: 1024
@@ -199,7 +203,9 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: disabled
+    mode: online
+    project: spcs-areal
+    entity: null
 
 perf_tracer:
   experiment_name: ${experiment_name}

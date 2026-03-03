@@ -1,0 +1,98 @@
+# Fresh AReaL build from source for SPCS
+# This avoids the broken areal-runtime base image
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies + Python 3.12 from deadsnakes PPA
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    git \
+    curl \
+    wget \
+    cron \
+    sysvinit-utils \
+    build-essential \
+    cmake \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up Python 3.12 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+# Install uv for fast package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Create venv at /AReaL/.venv to match expected paths
+RUN mkdir -p /AReaL && \
+    python3.12 -m venv /AReaL/.venv
+
+# Activate venv for subsequent commands
+ENV VIRTUAL_ENV=/AReaL/.venv
+ENV PATH="/AReaL/.venv/bin:$PATH"
+
+# Upgrade pip and install build tools
+RUN pip install --upgrade pip setuptools wheel
+
+# Clone AReaL from source (fresh install)
+RUN git clone https://github.com/inclusionAI/AReaL.git /AReaL/src
+
+WORKDIR /AReaL/src
+
+# Install AReaL with all CUDA extras using uv
+# This installs: vllm, sglang, flash-attn, megatron, torch_memory_saver
+RUN uv pip install -e ".[cuda]" --no-build-isolation
+
+# Verify areal.utils modules exist
+RUN python -c "from areal.utils import name_resolve, names, worker_util; print('areal.utils modules OK')"
+
+# Install Snowflake runtime dependencies
+RUN uv pip install --no-deps \
+    snowflake-ml-python==1.26.0 \
+    snowflake-connector-python==3.17.0 \
+    snowflake-snowpark-python \
+    snowflake.core
+
+RUN uv pip install \
+    asn1crypto \
+    boto3 \
+    sortedcontainers \
+    tomlkit \
+    cachetools \
+    retrying \
+    pytimeparse \
+    sqlparse \
+    importlib_resources \
+    cryptography \
+    pyopenssl
+
+# Copy and install mlruntimes_service wheel (provides snowflake.runtime)
+COPY mlruntimes_service-2.2.26-py3-none-any.whl /tmp/
+RUN uv pip install --no-deps /tmp/mlruntimes_service-2.2.26-py3-none-any.whl
+
+# Create Ray compatibility wrapper script
+COPY ray-wrapper.sh /tmp/ray-wrapper.sh
+RUN mv /AReaL/.venv/bin/ray /AReaL/.venv/bin/ray-original || true && \
+    cp /tmp/ray-wrapper.sh /AReaL/.venv/bin/ray && \
+    chmod +x /AReaL/.venv/bin/ray && \
+    ln -sf /AReaL/.venv/bin/ray /usr/local/bin/ray
+
+# Set PYTHONPATH to include AReaL source
+ENV PYTHONPATH="/AReaL/src:$PYTHONPATH"
+
+# Disable HuggingFace XET storage (requires additional network endpoints)
+ENV HF_HUB_DISABLE_XET=1
+
+# Add ML Jobs entrypoint script
+RUN echo '#!/bin/bash\nexec "$@"' > /usr/local/bin/_entrypoint.sh && \
+    chmod +x /usr/local/bin/_entrypoint.sh
+
+WORKDIR /AReaL

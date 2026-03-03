@@ -1,0 +1,52 @@
+# Build Fresh AReaL Docker Image for SPCS
+
+## Background
+The existing AReaL container image (`ghcr.io/inclusionai/areal-runtime:v0.5.3`) has a broken installation - the `areal.utils.*` modules are missing. We need to build a fresh image from source.
+
+## Files Location
+All files are in: `/code/users/thonguyen/sf-samples/samples/ml/ml_jobs/rl_finetune/docker/`
+
+- `Dockerfile.fresh` - Fresh AReaL build from NVIDIA CUDA base + git clone from source
+- `ray-wrapper.sh` - Ray compatibility wrapper for ML Jobs
+- `mlruntimes_service-2.2.26-py3-none-any.whl` - Snowflake runtime wheel (already exists)
+
+## Build & Push Commands
+
+```bash
+cd /code/users/thonguyen/sf-samples/samples/ml/ml_jobs/rl_finetune/docker
+
+# 1. Build the image (this will take 15-30 min due to CUDA deps)
+docker build -f Dockerfile.fresh -t areal-fresh:v1 .
+
+# 2. Login to Snowflake registry
+snow spcs image-registry login
+# OR manually:
+# docker login preprod8-notebook-mltest.awsuswest2preprod8.registry-dev.snowflakecomputing.com
+
+# 3. Tag for Snowflake registry
+docker tag areal-fresh:v1 preprod8-notebook-mltest.awsuswest2preprod8.registry-dev.snowflakecomputing.com/rl_training_db/rl_schema/rl_images/areal-fresh:v1
+
+# 4. Push to registry
+docker push preprod8-notebook-mltest.awsuswest2preprod8.registry-dev.snowflakecomputing.com/rl_training_db/rl_schema/rl_images/areal-fresh:v1
+```
+
+## What the Image Contains
+- Base: `nvidia/cuda:12.4.1-devel-ubuntu22.04`
+- Python 3.12 (from deadsnakes PPA)
+- Fresh git clone of AReaL from `https://github.com/inclusionAI/AReaL.git`
+- Full `uv pip install -e ".[cuda]"` which includes:
+  - vLLM 0.14.0
+  - SGLang 0.5.7
+  - flash-attn 2.8.1
+  - megatron-core
+  - torch 2.9.1
+- Snowflake runtime deps (snowflake-ml-python, snowflake-connector-python, etc.)
+- Ray wrapper script for ML Jobs compatibility
+
+## After Push
+The new image will be at:
+```
+preprod8-notebook-mltest.awsuswest2preprod8.registry-dev.snowflakecomputing.com/rl_training_db/rl_schema/rl_images/areal-fresh:v1
+```
+
+Let me know when the push is complete and I'll update the SPCS service spec to use it.
