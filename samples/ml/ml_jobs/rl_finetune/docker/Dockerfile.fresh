@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     ninja-build \
+    libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up Python 3.12 as default
@@ -47,12 +48,45 @@ RUN git clone https://github.com/inclusionAI/AReaL.git /AReaL/src
 
 WORKDIR /AReaL/src
 
-# Install AReaL with all CUDA extras using uv
-# This installs: vllm, sglang, flash-attn, megatron, torch_memory_saver
-RUN uv pip install -e ".[cuda]" --no-build-isolation
+# Install core AReaL dependencies (use prebuilt wheels where possible)
+RUN uv pip install \
+    "torch>=2.9.1,<2.10" \
+    torchao \
+    torchaudio \
+    torchvision \
+    torchdata \
+    huggingface_hub \
+    "datasets>=3.0.0" \
+    "transformers==4.57.1" \
+    peft \
+    "vllm==0.14.0" \
+    "sglang[all]" \
+    "ray[default]" \
+    accelerate \
+    deepspeed \
+    wandb \
+    hydra-core \
+    omegaconf \
+    colorlog \
+    flask \
+    portalocker \
+    filelock \
+    tqdm \
+    numpy \
+    pandas \
+    scipy
 
-# Verify areal.utils modules exist
-RUN python -c "from areal.utils import name_resolve, names, worker_util; print('areal.utils modules OK')"
+# Install AReaL from source without dependencies (already installed above)
+RUN uv pip install -e . --no-deps
+
+# Install any remaining missing dependencies
+RUN uv pip install aiofiles "math-verify==0.8.0" tenacity swanlab tensorboardX
+
+# Verify ALL critical areal modules exist
+RUN python -c "from areal.utils import name_resolve, names; print('areal.utils modules OK')" && \
+    python -c "from areal.infra.launcher import ray; print('areal.infra.launcher.ray OK')" && \
+    python -c "from areal.engine import sglang_remote; print('areal.engine.sglang_remote OK')" && \
+    python -c "import areal; print(f'AReaL installed at: {areal.__file__}')"
 
 # Install Snowflake runtime dependencies
 RUN uv pip install --no-deps \
