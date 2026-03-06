@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     libsndfile1 \
     libnuma-dev \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up Python 3.12 as default
