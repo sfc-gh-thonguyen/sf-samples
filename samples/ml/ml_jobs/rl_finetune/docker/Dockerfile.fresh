@@ -82,7 +82,7 @@ RUN uv pip install \
 RUN uv pip install -e . --no-deps
 
 # Install any remaining missing dependencies
-RUN uv pip install aiofiles "math-verify==0.8.0" tenacity swanlab tensorboardX
+RUN uv pip install aiofiles "math-verify==0.8.0" tenacity swanlab tensorboardX flash-attn
 
 # Verify ALL critical areal modules exist
 RUN python -c "from areal.utils import name_resolve, names; print('areal.utils modules OK')" && \
