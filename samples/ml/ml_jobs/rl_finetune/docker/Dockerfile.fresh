@@ -45,8 +45,8 @@ ENV PATH="/AReaL/.venv/bin:$PATH"
 # Upgrade pip and install build tools
 RUN pip install --upgrade pip setuptools wheel
 
-# Clone AReaL from source (fresh install)
-RUN git clone https://github.com/inclusionAI/AReaL.git /AReaL/src
+# Clone AReaL from source (fresh install) - cache bust for v1.0.2
+RUN git clone --branch v1.0.2 --depth 1 https://github.com/inclusionAI/AReaL.git /AReaL/src
 
 WORKDIR /AReaL/src
 
