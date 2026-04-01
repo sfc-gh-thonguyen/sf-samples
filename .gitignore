@@ -111,3 +111,6 @@ geospatial/streamlit-apps/.streamlit/.DS_Store
 
 .envrc
 .direnv
+
+# Large binary wheels
+*.whl
