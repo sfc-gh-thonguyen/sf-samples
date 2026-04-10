@@ -736,41 +736,7 @@ _NEW_CALL_METHOD = '''\
         return await asyncio.wait_for(future, timeout=self.timeout_seconds)'''
 
 
-def _patch_reward_api():
-    """Patch AReaL's AsyncRewardWrapper for native async + longer timeout."""
-    for path in ["/opt/venv/snowbook/lib/python3.12/site-packages/areal/api/reward_api.py",
-                 "/opt/venv/snowbook/lib/python3.11/site-packages/areal/api/reward_api.py",
-                 "/AReaL/src/areal/api/reward_api.py",
-                 "/AReaL/areal/api/reward_api.py"]:
-        if not os.path.exists(path):
-            continue
-
-        with open(path, "r") as f:
-            content = f.read()
-        original = content
-
-        # Patch 1: timeout 15s -> 300s
-        content = re.sub(
-            r'timeout_seconds:\s*float\s*=\s*15\b',
-            'timeout_seconds: float = 300',
-            content,
-        )
-
-        # Patch 2: replace __call__ with native async version
-        pattern = r'(    async def __call__\(self.*?\n)(.*?)(?=\n    (?:def |async def |@)|$)'
-        match = re.search(pattern, content, re.DOTALL)
-        if match:
-            content = content[:match.start()] + _NEW_CALL_METHOD + content[match.end():]
-
-        if content != original:
-            with open(path, "w") as f:
-                f.write(content)
-            print(f"  Patched {path}: timeout=300s, native async __call__")
-        else:
-            print(f"  WARNING: No patches matched in {path}")
-        return
-
-    print("  WARNING: reward_api.py not found")
+from patches import _patch_reward_api  # noqa: E402
 
 
 # ============================================================================
