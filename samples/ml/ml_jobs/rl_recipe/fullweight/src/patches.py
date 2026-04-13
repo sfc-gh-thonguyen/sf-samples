@@ -184,6 +184,51 @@ def _patch_sglang_lora():
         print("  SGLang LoRA patches: no patches applied (already applied or targets not found)")
 
 
+_NEW_CALL_METHOD = '''\
+    _async_reward_fn_resolved = None
+
+    async def __call__(self, *args, **kwargs) -> float:
+        """Native async reward — bypasses ProcessPoolExecutor.
+        Patched by run_medical_soap.py.
+        """
+        cls = type(self)
+        if cls._async_reward_fn_resolved is None:
+            try:
+                from medical_soap.run_medical_soap import async_medical_soap_reward_fn
+                cls._async_reward_fn_resolved = async_medical_soap_reward_fn
+                logger.info("AsyncRewardWrapper: using native async reward path")
+            except ImportError:
+                logger.warning("async_medical_soap_reward_fn not found, falling back to sync path")
+                cls._async_reward_fn_resolved = False
+
+        if cls._async_reward_fn_resolved and cls._async_reward_fn_resolved is not False:
+            result = await asyncio.wait_for(
+                cls._async_reward_fn_resolved(*args, **kwargs),
+                timeout=self.timeout_seconds,
+            )
+            if isinstance(result, tuple):
+                reward, sub_scores = result
+                from areal.utils import stats_tracker
+                from areal.infra import workflow_context
+                scope = workflow_context.stat_scope()
+                stats_tracker.get(scope).scalar(**{
+                    f"reward/{k}": v for k, v in sub_scores.items()
+                })
+                return reward
+            return result
+
+        # Fallback: original ProcessPoolExecutor path
+        with self._lock:
+            executor = self._executors.get(self._executor_key)
+        if executor is None:
+            raise RuntimeError("ProcessPoolExecutor has been shut down")
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(
+            executor, partial(self.reward_fn, *args, **kwargs),
+        )
+        return await asyncio.wait_for(future, timeout=self.timeout_seconds)'''
+
+
 def _patch_reward_api():
     """Patch AReaL's AsyncRewardWrapper for native async + longer timeout."""
     for path in ["/opt/venv/snowbook/lib/python3.12/site-packages/areal/api/reward_api.py",
