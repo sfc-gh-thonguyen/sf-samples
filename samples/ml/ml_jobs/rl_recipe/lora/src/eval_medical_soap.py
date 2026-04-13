@@ -385,6 +385,18 @@ def merge_lora_adapter(base_model_path, adapter_path):
     tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
 
     print(f"  Loading LoRA adapter: {adapter_path}")
+    # Fix key names: strip .default. adapter prefix if present
+    # (our training saves raw state_dict keys with .default., but PEFT expects without)
+    adapter_weights_path = os.path.join(adapter_path, "adapter_model.safetensors")
+    if os.path.exists(adapter_weights_path):
+        from safetensors import safe_open
+        from safetensors.torch import save_file as _save_file
+        with safe_open(adapter_weights_path, framework="pt") as f:
+            keys = list(f.keys())
+            if any(".default." in k for k in keys):
+                print(f"  Fixing adapter key names: stripping .default. from {len(keys)} keys")
+                fixed = {k.replace(".default.", "."): f.get_tensor(k) for k in keys}
+                _save_file(fixed, adapter_weights_path)
     model = PeftModel.from_pretrained(base_model, adapter_path, device_map="cpu")
 
     print(f"  Merging adapter into base model...")

@@ -88,7 +88,7 @@ def _patch_sglang_lora():
                 "            from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict\n"
                 "            _opts = StateDictOptions(full_state_dict=True, cpu_offload=True)\n"
                 "            _sd = get_model_state_dict(self.model, options=_opts)\n"
-                "            _lora_sd = {k: v for k, v in _sd.items() if 'lora_' in k}\n"
+                "            _lora_sd = {k.replace('.default.', '.'): v for k, v in _sd.items() if 'lora_' in k}\n"
                 "            if dist.get_rank() == 0:\n"
                 "                import os as _os\n"
                 "                from safetensors.torch import save_file as _sf\n"
@@ -139,7 +139,7 @@ def _patch_sglang_lora():
                 '            _is_lora = hasattr(self.model, "peft_config")\n'
                 '            if _is_lora:\n'
                 '                # Filter for LoRA adapter keys only\n'
-                '                _lora_sd = {k: v for k, v in state_dict.items() if "lora_" in k}\n'
+                '                _lora_sd = {k.replace(".default.", "."): v for k, v in state_dict.items() if "lora_" in k}\n'
                 '                from safetensors.torch import save_file as _sf\n'
                 '                _sf(_lora_sd, os.path.join(path, "adapter_model.safetensors"))\n'
                 '                self.model.peft_config["default"].save_pretrained(path)\n'
