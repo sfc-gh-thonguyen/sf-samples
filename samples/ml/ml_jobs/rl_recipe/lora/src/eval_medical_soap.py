@@ -380,25 +380,27 @@ def merge_lora_adapter(base_model_path, adapter_path):
     print(f"  Loading base model: {base_model_path}")
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_path, torch_dtype=torch.bfloat16, device_map="cpu",
-        trust_remote_code=True,
+        trust_remote_code=True, low_cpu_mem_usage=True,
     )
     tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
 
     print(f"  Loading LoRA adapter: {adapter_path}")
-    model = PeftModel.from_pretrained(base_model, adapter_path)
+    model = PeftModel.from_pretrained(base_model, adapter_path, device_map="cpu")
 
     print(f"  Merging adapter into base model...")
     model = model.merge_and_unload()
 
     print(f"  Saving merged model to {merged_path}")
     os.makedirs(merged_path, exist_ok=True)
-    model.save_pretrained(merged_path)
+    model.save_pretrained(merged_path, safe_serialization=True)
     tokenizer.save_pretrained(merged_path)
 
-    # Free memory
-    del model, base_model
+    # Free memory aggressively
+    del model, base_model, tokenizer
     import gc
     gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     print(f"  Merge complete: {merged_path}")
     return merged_path
@@ -760,6 +762,10 @@ async def evaluate_model(model_spec, samples, host):
 
     # Start generation server if needed
     if backend == "lora":
+        # Download adapter from stage if needed
+        if lora_adapter_path.startswith("@"):
+            print(f"  Downloading LoRA adapter from stage: {lora_adapter_path}")
+            lora_adapter_path = download_checkpoint(lora_adapter_path, host)
         # Merge LoRA adapter into base model, then serve merged model
         print(f"  LoRA eval: merging {lora_adapter_path} into {base_model}")
         merged_path = merge_lora_adapter(base_model, lora_adapter_path)
