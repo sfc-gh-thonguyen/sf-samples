@@ -14,7 +14,7 @@ from snowflake.snowpark import Session
 from snowflake.ml import jobs
 
 PAYLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "src")
-RUNTIME_IMAGE_TAG = "2.5.0-test"
+RUNTIME_IMAGE_TAG = "2.5.0-py312"
 
 
 def _load_pip_requirements(payload_dir):
