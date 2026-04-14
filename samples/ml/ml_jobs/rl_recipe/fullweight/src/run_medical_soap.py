@@ -766,9 +766,6 @@ def main():
         tokenizer=config.tokenizer_path,
         enable_thinking=False,
     )
-    eval_workflow_kwargs = workflow_kwargs.copy()
-    eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
-
     # 9. Train
     print("\n--- Training ---")
     print(f"  Reward function: {reward_fn_path}")
@@ -778,9 +775,7 @@ def main():
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-        eval_workflow="areal.workflow.rlvr.RLVRWorkflow",
-        eval_workflow_kwargs=eval_workflow_kwargs,
+        valid_dataset=None,
     ) as trainer:
         trainer.train(
             workflow="areal.workflow.rlvr.RLVRWorkflow",
